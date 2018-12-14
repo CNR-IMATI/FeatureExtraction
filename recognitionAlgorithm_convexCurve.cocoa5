@@ -1,0 +1,568 @@
+-- Function that computes \infty norm of vector V
+Define InftyNorm(V)
+  Return Max([abs(El) | El In V]);
+EndDefine; -- InftyNorm
+
+
+-- Function that computes \infty norm of matrix M
+Define InftyMatNorm(M)
+  Rows := NumRows(M);
+  Cols := NumCols(M);
+  Return Max(flatten([Sum([abs(M[I][J])|J In 1..Cols])|I In 1..Rows]));
+EndDefine; -- InftyMatNorm
+
+
+-- Function that computes square root of an integer N
+-- up to Dth order
+Define SquareRoot(N, D)
+  Return FloorSqrt(N*10^(2*D))/(10^D);
+EndDefine; -- SquareRoot
+
+
+-- Fucntion that computes c = max(2, sqrt(n))
+-- up to Dth order
+Define ComputeC(N, D)
+  If N <= 4 Then
+    Return 2;
+  Else
+    Return SquareRoot(N, D);
+  EndIf;
+EndDefine; -- ComputeC
+
+
+-- Function that computes \infty-norm of Hessian matrix
+-- of polynomial F at the point Point
+Define ComputeHp(F, Point)  -- unique function with ComputeH?
+  R := RingOf(F);
+  k := CoeffRing(R);        -- in our case is QQ
+  phi := PolyAlgebraHom(R, k, Point);
+  XX := indets(R);
+  N := NumIndets(R);
+  
+  JacF := jacobian([F]);
+  --JacF := flatten(list(JacF));
+  JacF := flatten(GetRows(JacF));
+  HF := NewMat(R, N, N);  -- Hessian matrix 
+  For I:=1 To N Do
+    For J:=1 To N Do
+      HF[I][J] := deriv(JacF[I], XX[J]);
+    EndFor;
+  EndFor;
+  -- construct Hessian matrix M = HF(Point)
+  M := NewMat(k, N, N);
+  For I:=1 To N Do
+    For J:=1 To N Do
+      M[I][J] := phi(HF[I][J]);
+    EndFor;
+  EndFor;
+  H := InftyMatNorm(M);
+  Return H; 
+EndDefine; -- ComputeHp
+-- ComputeHp
+
+
+-- Function that computes H = sup(||H_F(x)||_\infty | x \in B)
+-- F= polynomial, B=(\infty,Eps)-unit ball centered at Point
+-- WARNING: heuristic computation!!!
+Define ComputeH(F, Point, Eps)
+  R := RingOf(F);
+  k := CoeffRing(R);      -- in our case is QQ
+  phi := PolyAlgebraHom(R, k, Point);
+  XX := indets(R);
+  N := NumIndets(R);
+  
+  JacF := jacobian([F]);
+  JacF := flatten(GetRows(JacF));
+  HF := NewMat(R, N, N);  -- Hessian matrix
+  For I:=1 To N Do
+    For J:=1 To N Do
+      HF[I][J] := deriv(JacF[I], XX[J]);
+    EndFor;
+  EndFor;
+  -- construct Hessian matrix M = HF(Point)
+  M := NewMat(k, N, N);
+  For I:=1 To N Do
+    For J:=1 To N Do
+      M[I][J] := phi(HF[I][J]);
+    EndFor;
+  EndFor;
+  H := InftyMatNorm(M);
+  -- WARNING: heuristic upper bound, 100 random cases
+  For I:=1 To 100 Do
+    Q:=[Point[K]+(Rand(-999,999)/1000)*Eps[K] | K In 1..N];
+    phiQ := PolyAlgebraHom(R, k, Q);
+    M := NewMat(k, N, N);
+    For K:=1 To N Do
+      For J:=1 To N Do
+	M[K][J] := phiQ(HF[K][J]);
+      EndFor;
+    EndFor;
+    Value := InftyMatNorm(M);
+    If Value > H Then H := Value; EndIf;
+  EndFor;
+  Return H; 
+EndDefine; -- ComputeH
+
+
+-- Function that computes J = sup(||Jac_f(x)^+||_\infty | x \in D(Point, Radius))
+-- F= polynomial, Jac_f(x)^+ = pseudoinverse = Jac_f(x)^t/||Jac_f(x)||_2^2,
+-- D(Point, Radius) = \infty-ball centered at Point with radius Radius
+-- WARNING: heuristic computation!!!
+Define ComputeJ(F, Point, Radius)
+  R := RingOf(F);
+  k := CoeffRing(R); -- in our case is QQ
+  phi := PolyAlgebraHom(R, k, Point);
+  N := NumIndets(R);
+ 
+  JacF := jacobian([F]);
+  JacF := flatten(GetRows(JacF));
+  JacFAtP := [phi(Pol) | Pol In JacF];
+  J := InftyNorm(JacFAtP)/ScalarProduct(JacFAtP,JacFAtP);
+  If Deg(F)>1 Then
+    -- WARNING: heuristic upper bound, 100 random cases
+    For I:=1 To 100 Do
+      Q := [Point[K]+(Rand(-999,999)/1000)*Radius | K In 1..N];
+      phiQ := PolyAlgebraHom(R, k, Q);
+      EvalAtQ := [phiQ(Pol) | Pol In JacF];
+      Value := InftyNorm(EvalAtQ)/ScalarProduct(EvalAtQ,EvalAtQ);
+      If Value > J Then J := Value; EndIf;
+    EndFor;
+  EndIf;
+  Return J; 
+EndDefine; -- ComputeJ
+
+
+-- Function that computes Theta (as defined in the paper Beltrametti, Torrente) 
+Define ComputeTheta(JacFAtP, Hp, Radius)
+  N := Len(JacFAtP);
+  J := InftyNorm(JacFAtP)/ScalarProduct(JacFAtP,JacFAtP);
+  SqrtN := SquareRoot(N, 5);
+  Theta := J + N^2*(1+2*SqrtN)*(Hp/ScalarProduct(JacFAtP,JacFAtP))*Radius;
+  Return Theta;
+EndDefine; -- ComputeTheta
+
+
+-- Function that computes B1: necessary crossing cell condition
+Define ComputeB1(F, Point, EpsMax, H)
+  R := RingOf(F);
+  k := CoeffRing(R); -- in our case is QQ
+  phi := PolyAlgebraHom(R, k, Point);
+  
+  JacF := jacobian([F]);
+  JacF := flatten(GetRows(JacF));
+  JacFAtP := [phi(Pol) | Pol In JacF];
+  Jac1 := InftyNorm(JacFAtP);
+  B1 := Jac1*EpsMax + (1/2)*H*EpsMax^2;
+  Return B1;
+EndDefine; -- ComputeB1
+
+
+-- Function that computes B2: sufficient crossing cell condition
+Define ComputeB2(F, Point, EpsMin, H, c)
+  R := RingOf(F);
+  k := CoeffRing(R); -- in our case is QQ
+  phi := PolyAlgebraHom(R, k, Point);
+  XX := indets(R);
+  N := NumIndets(R);
+
+  JacF := jacobian([F]);
+  JacF := flatten(GetRows(JacF));
+  JacFAtP := [phi(Pol) | Pol In JacF];
+  Jac1 := InftyNorm(JacFAtP);
+  If IsZero(Jac1) Then
+    --PrintLn "The gradient of F at the point ", Point , " is zero ";
+    Return 0;
+  EndIf;
+  If Deg(F)=1 Then
+    Radius := 0.9*EpsMin;
+    --PrintLn "Radius = ", DecimalStr(Radius,5); 
+    J := ComputeJ(F, Point, Radius);
+    B2 := Radius/J;
+  Else
+    Radius := 0.9*Min([EpsMin, Jac1/H]);
+    --PrintLn "Radius = ", DecimalStr(Radius,5); 
+    J := ComputeJ(F, Point, Radius);
+    SqrtN := SquareRoot(N, 5);
+    B2 := (2*Radius)/(J*(c+SqrtN*H*J*Radius));
+  EndIf;  
+  Return B2;
+EndDefine; -- ComputeB2
+
+
+-- Function that computes B2': sufficient crossing cell condition
+Define ComputeB2Bis(F, Point, EpsMin, Hp, c)
+  R := RingOf(F);
+  k := CoeffRing(R); -- in our case is QQ
+  phi := PolyAlgebraHom(R, k, Point);
+  XX := indets(R);
+  N := NumIndets(R);
+
+  JacF := jacobian([F]);
+  JacF := flatten(GetRows(JacF));
+  JacFAtP := [phi(Pol) | Pol In JacF];
+  Jac1 := InftyNorm(JacFAtP);
+  If IsZero(Jac1) Then
+    --PrintLn "The gradient of F at the point ", Point , " is zero ";
+    Return 0;
+  EndIf;
+  If Deg(F)=1 Then
+    Radius := 0.9*EpsMin;
+    --PrintLn "Radius = ", DecimalStr(Radius,5); 
+    J := ComputeJ(F, Point, Radius);
+    B2 := Radius/J;
+  Else
+    If IsZero(Hp) Then
+      --PrintLn "The Hessian of F at the point ", Point , " is zero ";
+      Return 0;
+    EndIf;
+    Radius := 0.9*Min([EpsMin, Jac1/(N^2*Hp)]);
+    --PrintLn "Radius = ", DecimalStr(Radius,5);
+    Theta := ComputeTheta(JacFAtP, Hp, Radius);
+    SqrtN := SquareRoot(N, 5);
+    B2 := (2*Radius)/(Theta*(c+SqrtN*N^2*Hp*Theta*Radius)); 
+  EndIf;  
+  Return B2;
+EndDefine; -- ComputeB2Bis
+
+
+-- This function performs a more accurate test in the uncertain case
+-- B2 < |F(Point)| < B1 (or B2' < |f(Point)| < B2')
+-- by iteratively bisection of the given unit cell
+Define AccurateTest(F, Point, Eps, Rt, Iter)
+  N := Len(Eps);
+  Corner := Point - Eps;
+  J := 1;
+  -- main cycle
+  While J <= Iter Do
+    Delta := (1/(2^J))*Eps;
+    D := [2^J | I In 1..N];
+    ZeroList := NewList(product(D), zero(Rt));
+    B := ZeroList;
+    MultiIndex := MyCartesianProduct([[K|K In 1..D[I]]|I In 1..Len(D)]);
+    For K:=1 To Len(MultiIndex) Do
+      Pt := IndexToPt(Corner, MultiIndex[K], Delta);
+      B[K] := CrossingCell(F, Pt, Delta, Rt);
+      If B[K] = one(Rt) Then Return one(Rt); EndIf;
+    EndFor;
+    If B = ZeroList Then Return zero(Rt); EndIf;
+    J := J+1;
+  EndWhile;
+  Return indet(Rt,1);
+EndDefine; -- AccurateTest
+
+
+-- CROSSING CELL ALGORITHM:
+-- this function tests whether or not the hypersurface defined 
+-- by equation F=0 crosses (\infty, Eps)-unit ball centered at P.
+-- The algorithm returns 0=not cross, 1=cross, t=unknown
+Define CrossingCell(F, Point, Eps, Rt)
+  R := RingOf(F);
+  k := CoeffRing(R); -- in our case is QQ
+  phi := PolyAlgebraHom(R, k, Point);
+  XX := indets(R);
+  N := NumIndets(R);
+  
+  EpsMax := Max(Eps);
+  EpsMin := Min(Eps);
+    
+  FP := phi(F);
+  If IsZero(FP) Then Return one(Rt);
+  Else
+    --H := ComputeH(F, Point, Eps);  -- uncomment if you want to use B1
+    H:=ComputeHp(F, Point);          -- uncomment if you want to use B1'
+    B1 := ComputeB1(F, Point, EpsMax, H);
+    If abs(FP) > B1 Then Return zero(Rt);
+    Else
+      c := ComputeC(N, 5);
+      --B2 := ComputeB2(F, Point, EpsMin, H, c);  -- uncomment if you want to use B2
+      B2 := ComputeB2Bis(F, Point, EpsMin, H, c); -- uncomment if you want to use B2'
+      If abs(FP) < B2 Then Return one(Rt);
+      Else
+      	Return indet(Rt,1);
+      EndIf;
+    EndIf;
+  EndIf;
+  PrintLn; 
+EndDefine; -- CrossingCell
+
+
+-- This function computes the size J[1]><...><J[N] of the multi-matrix
+-- associated to the discretization 
+Define MultiSizeGrid(PtMin, PtMax, Eps)
+  N := Len(Eps);
+  DRat := [(PtMax[I]-PtMin[I])/Eps[I] | I In 1..N];  -- rational part
+  J := [Div(Num(El), Den(El)) | El In DRat];         -- integer part
+  For I:=1 To Len(J) Do
+    If IsOdd(J[I]) Then J[I] := J[I]+1; EndIf;
+    J[I] := (J[I]/2) +1;
+  EndFor;
+  Return J;
+EndDefine; -- MultiSizeGrid
+
+
+-- This function associates the point corresponding to the  position Pos
+-- Q = [XX[1],YY[1],...] down-left corner (point), Eps = tolerance vector
+Define IndexToPt(Q, Index, Eps)
+  Return [Q[I] + 2*(Index[I]-1)*Eps[I]|I In 1..Len(Q)];
+EndDefine; -- IndexToPt
+
+
+-- This function computes the cartesian product of a list of lists L
+Define MyCartesianProduct(L)
+  N := Len(L);
+  If N=1 Then
+    CP:=L[1];
+    CP:=[[El]|El In CP];
+  Else
+    CP := L[N];
+    For I:=N-1 To 1 Step -1 Do
+      CP := L[I]><CP;
+      CP := [Flatten(El)|El In CP];
+    EndFor;
+  EndIf;
+  Return CP;
+EndDefine; -- MyCartesianProduct
+
+
+-- CROSSING AREA ALGORITHM:
+-- this function returns a multi-matrix with values 0,1,t;
+-- for each entry of the multi-matrix the CROSSING CELL ALGORITHM
+-- is applied to text whether or not the hypersurface crosses
+-- the unit cell associated to it.
+Define CrossingArea(F, PtMin, PtMax, Eps, Rt)
+  --PrintLn "Crossing Area for polynomial F = ", F;
+  J := MultiSizeGrid(PtMin, PtMax, Eps);  -- size of multi-matrix
+  --PrintLn "J = ", J;
+  M := NewList(product(J), zero(Rt));     -- accumulator matrix
+  MultiIndex := MyCartesianProduct([[K|K In 1..J[I]]|I In 1..Len(J)]);
+  //PrintLn "MultiIndex = ", MultiIndex;
+  For K:=1 To Len(MultiIndex) Do
+    Pt := IndexToPt(PtMin, MultiIndex[K], Eps);
+    M[K] := CrossingCell(F, Pt, Eps, Rt);
+    -- -- accuarate test to handle the uncertain cases (unknown t)
+    -- -- if you don't want it just comment it...
+    -- If M[K] = indet(Rt,1) Then
+    --    --PrintLn "Start Accurate Test";
+    --    M[K] := AccurateTest(F, Pt, Eps, Rt, 1);
+    -- EndIf;
+  EndFor;
+  Return M;
+EndDefine; -- CrossingArea
+
+
+-- This function sums up the multimatrices for a list of polys
+Define MultiCrossingArea(ListF, PtMin, PtMax, Eps, Rt)
+  AA := [CrossingArea(F, PtMin, PtMax, Eps, Rt)| F In ListF];
+  Return Sum(AA);
+EndDefine; -- MultiCrossingArea
+
+
+-- This function sums up the multimatrices for a list of polys
+Define MultiCrossingAreaNew(Ref ListPoints, ListF, PtMin, PtMax, Eps, Rt)
+  J := MultiSizeGrid(PtMin, PtMax, Eps);  -- size of multi-matrix
+  M := NewList(product(J), zero(Rt));     -- accumulator matrix
+  MultiIndex := MyCartesianProduct([[K|K In 1..J[I]]|I In 1..Len(J)]);
+  PrintLn "Number of iterations = ", Len(MultiIndex); PrintLn;
+  For K:=1 To Len(MultiIndex) Do
+    If mod(K,10)=0 Then Print "....", K; EndIf;
+    --PrintLn "K = ", K;
+    ListPts := [];
+    Pt := IndexToPt(PtMin, MultiIndex[K], Eps);
+    For I:=1 To Len(ListF) Do
+      //PrintLn "I = ", I;
+      CC := CrossingCell(ListF[I], Pt, Eps, Rt);
+      -- accurate test to handle the uncertain cases (unknown t)
+      -- if you don't want it just comment it...
+      If CC = indet(Rt,1) Then
+      	--PrintLn "Start Accurate Test";
+      	CC := AccurateTest(ListF[I], Pt, Eps, Rt, 1);
+      EndIf;
+      M[K] := M[K] + CC;
+      If CC = one(Rt) Then
+	Append(Ref ListPts, I);
+      EndIf;
+    EndFor;
+    Append(Ref ListPoints, ListPts);
+  EndFor;
+  Return M;
+  //AA := [CrossingArea(F, PtMin, PtMax, Eps, Rt)| F In ListF];
+  //Return Sum(AA);
+EndDefine; -- MultiCrossingAreaNew
+
+
+
+-- This function computes the index of the cells corresponding
+-- to the maximum of M. Note that, M: array with linear entries in t.
+Define ComputeMax(M, PtMin, PtMax, Eps)
+  Rt := RingOf(M[1]);
+  k := CoeffRing(Rt); 
+  phi := PolyAlgebraHom(Rt, k, [one(k)/2]); ////modificato da 0 a 1!!
+  PosList := [1];
+  Max := phi(M[1]);
+  For I:=2 To Len(M) Do
+    If phi(M[I]) > Max Then
+      Max := phi(M[I]);
+      PosList:=[I];
+    -- Elif phi(M[I]) = Max Then
+    --   Append(Ref PosList, I);
+    EndIf;
+  EndFor;
+  J := MultiSizeGrid(PtMin, PtMax, Eps);
+  MultiIndex := MyCartesianProduct([[K|K In 1..J[I]]|I In 1..Len(J)]);
+  CellMax := [];
+  Foreach Pos In PosList Do
+    Append(Ref CellMax, IndexToPt(PtMin, MultiIndex[Pos],Eps));
+  EndForeach;
+  Return [Max, CellMax];
+EndDefine; -- ComputeMax
+
+
+Define ComputeSecondMax(M, MaxValue, PtMin, PtMax, Eps)
+  Rt := RingOf(M[1]);
+  k := CoeffRing(Rt); 
+  phi := PolyAlgebraHom(Rt, k, [1]); ////modificato da 0 a 1!!
+  PosList := [1];
+  Max := phi(M[1]);
+  If (Max = MaxValue) Then
+    Max:=zero(Rt);
+    PosList:=[];
+  EndIf;
+  For I:=2 To Len(M) Do
+    If (phi(M[I])<>MaxValue) And (phi(M[I]) > Max) Then
+      Max := phi(M[I]);
+      PosList:=[I];
+    Elif phi(M[I]) = Max Then
+      Append(Ref PosList, I);
+    EndIf;
+  EndFor;
+  J := MultiSizeGrid(PtMin, PtMax, Eps);
+  MultiIndex := MyCartesianProduct([[K|K In 1..J[I]]|I In 1..Len(J)]);
+  CellMax := [];
+  Foreach Pos In PosList Do
+    Append(Ref CellMax, IndexToPt(PtMin, MultiIndex[Pos],Eps));
+  EndForeach;
+  Return [Max, CellMax];
+EndDefine; -- ComputeSecondMax
+
+
+-- This function converts MArray to a 2-dimensional matrix
+-- of size D1><D2 (obviously, it works for 2-dim matrices).
+Define ConvertToMat(MArray, D)
+  If Len(D)<>2 Then PrintLn "Errore: la dimensione di M non è 2"; EndIf;
+  Rt := owner(MArray[1]);
+  A := NewMat(Rt, D[1], D[2]);
+  For I:=1 To D[1] Do
+    For J:=1 To D[2] Do
+      K := (I-1)*D[2]+J;
+      A[I][J] := MArray[K];
+    EndFor;   
+  EndFor;
+  Return A;
+EndDefine; -- ConvertToMat
+
+
+Define LessThanFirstComp(M1, M2)    -- define the sorting function
+  Return M1[1] <= M2[1];
+EndDefine; -- the
+
+
+
+-- This function performs the recognition procedure based on
+-- the Hough transform technique. RegFam: regular family of polynomials.
+Define Recognition(RegFam, Points, PtMin, PtMax, Eps, Rt)   
+  N := Len(Points[1]);   -- N = dimension of the image space
+  T := Len(Eps);         -- T = dimension of the parameter space
+  P := RingOf(RegFam);   -- P = QQ[x[1..N], \lambda[1..T]]
+  k := CoeffRing(P);     -- in our case is QQ
+  XX := indets(P);
+  IS := IndetSymbols(P);
+  R := NewPolyRing(k, [IS[J]|J In (N+1)..(N+T)]);
+  -- construct list of HT
+  ListHT := [];
+  Foreach Pt In Points Do
+    images := Flatten([Pt,indets(R)]);
+    phi := PolyAlgebraHom(P, R, images); 
+    Append(Ref ListHT, phi(RegFam));
+  EndForeach;
+  -- sum of accumulator multimatrices  
+  //   A := MultiCrossingArea(ListHT, PtMin, PtMax, Eps, Rt);
+  ListPoints := [];
+  A := MultiCrossingAreaNew(Ref ListPoints, ListHT, PtMin, PtMax, Eps, Rt);
+  --PrintLn; PrintLn "Accumulator matrix = ", A; PrintLn;
+  MaxList := ComputeMax(A, PtMin, PtMax, Eps);
+  MaxValue := MaxList[1];
+  Return MaxList;
+EndDefine; -- Recognition
+
+
+
+
+
+-- Geometric petal on Eye
+Rt ::= QQ[t];
+P ::= QQ[x,y,a,b];
+Use P;
+
+str:=CocoaPackagePath();
+L:=len(str);
+I:=L;
+KK:=0;
+While I>0 And KK<2 Do
+  If str[I]<>"/" Then
+    I:=I-1;
+  Else
+    KK:=KK+1;
+    I:=I-1;
+  EndIf;
+EndWhile;
+path:=str[1];
+For J:=2 To I Do
+  path:=path+str[J];
+EndFor;
+path;
+
+Source path + "/input4CoCoA.cocoa5";
+
+RegFam := y+b*x*y-a;
+-- Source "/Users/torrente/work/Ricerche/CNR-IMATI/GRAVITATE/Dataset/algoritmi_Estrazione_Occhi/clusterPoints.cocoa5";
+-- Eps := [0.05, 0.02];
+-- PtMin:=[3.5, 0.10]; PtMax:=[4.5, 0.30];
+--PtMin:=[2.5, 0.05]; PtMax:=[3.5, 0.35];
+
+StartTime := CpuTime();
+MaxList := Recognition(RegFam, Points, PtMin, PtMax, Eps, Rt);
+EndTime := CpuTime();
+TimeTaken := EndTime - StartTime; --> ugly if printed directly
+PrintLn;PrintLn "Computation time: ", DecimalStr(TimeTaken);
+MaxList1:=MaxList[1];
+--PrintLn "The maximum value is ", MaxList[1];
+--PrintLn "The corresponding parameters values are = ", MaxList[2];
+
+-- path1 := path+ "/MaxValue";
+-- D:=OpenOFile(path1);
+-- --D := OpenOFile("MaxValue");  
+-- Print MaxList[1] On D;   
+-- close(D); 
+
+
+path2 := path+ "/RelMaxValue";
+D:=OpenOFile(path2);
+--D := OpenOFile("RelMaxValue");  
+Print DecimalStr(MaxList[1]/Len(Points),5) On D;   
+close(D);  
+
+path3 := path+ "/MaxCoords";
+D:=OpenOFile(path3);
+--D := OpenOFile("MaxCoords");  
+MaxCoords := MaxList[2];
+For I:=1 To Len(MaxCoords) Do
+  Print DecimalStr(MaxCoords[I][1]) On D;
+  Print " " On D;
+  PrintLn DecimalStr(MaxCoords[I][2]) On D;
+EndFor;  
+close(D);  
+
+
+
+
+
